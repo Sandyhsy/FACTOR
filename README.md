@@ -1,364 +1,511 @@
-# 0. Experiment Summary (Total = 11)
+# Multimodal Fashion Recommendation Framework Using Fine-Grained Attribute-Aware Retrieval
+By: Shao-Yu Huang
 
-## 0.1 Baseline (5)
+In summary, the research follows the same logic as the proposed framework. 
+The first notebook develops FACTOR for fine-grained attribute extraction, the second notebook applies the trained attribute and style models to downstream datasets, the third and fourth notebooks establish and validate the style classification module, and the final notebook performs attribute-aware fashion retrieval under image-only, text-only, fusion, and native multimodal settings. 
+Together, these notebooks form a complete experimental pipeline from garment understanding to recommendation generation.
 
-### Text-only (2)
 
-* **T1: Text-only / BGE**
-* **T2: Text-only / Voyage**
+## Codebase Overview
 
-### Image-only (3)
+## 1. Proposed Framework
 
-* **I1: Image-only / GCL**
-* **I2: Image-only / SigLIP**
-* **I3: Image-only / FashionCLIP**
+This project proposes a **multimodal fashion recommendation framework** that connects **fine-grained garment understanding** with **attribute-aware retrieval**. Instead of relying only on global visual similarity, the system first predicts structured semantic attributes from a clothing image, then extends the representation with a higher-level style label, and finally uses these outputs for retrieval and recommendation.
 
-## 0.2 Proposed (Fusion, 6)
+The full pipeline contains three major stages:
 
-Fusion = **2 (Text) × 3 (Image) = 6**
+1. **FACTOR: Fine-Grained Attribute Extraction**
+   This stage predicts low-level garment semantics from a single clothing image, including:
 
-* **F1: BGE + GCL**
-* **F2: BGE + SigLIP**
-* **F3: BGE + FashionCLIP**
-* **F4: Voyage + GCL**
-* **F5: Voyage + SigLIP**
-* **F6: Voyage + FashionCLIP**
+   * category
+   * subcategory
+   * color
+   * material
+   * pattern
 
----
+2. **Style Classification**
+   This stage predicts a higher-level semantic style label from the same garment image.
+   Style complements the five FACTOR attributes by capturing more abstract fashion concepts that are not directly visible from attribute labels alone.
 
-# 1. Data Setup
+3. **Attribute-Aware Retrieval / Recommendation**
+   This stage uses predicted structured attributes, image features, or both to retrieve similar items from a gallery.
+   The goal is not only to find visually similar products, but also to return items that are **semantically aligned** with the query garment.
 
-## 1.1 Query Set
-
-* Dataset: `recom_dataset`
-* Query images: **50**
-* Each query image → Factor model predicts 5 attributes:
-  * `category, sub_category, color, pattern, material`
-* Generate canonical sentence from predicted attributes (template-based)
-
-## 1.2 Retrieval Database (per seed)
-
-* Seeds: 5
-* Database per seed = that seed’s `train/images`
-* For each db image: 
-    * apply the **same embedding pipeline** as query (text-only / image-only / fusion)
-    * ensure the **same projection and same final dimension** are used
+Overall, the project moves from **image understanding** to **semantic representation**, and finally to **recommendation generation**, forming an end-to-end pipeline for interpretable fashion retrieval. 
 
 ---
 
-# 2. Pipeline Overview
-
-## 2.1 End-to-end Flow (per query image)
-
-1. **Input image**
-2. **Factor model** → predicted attributes
-    Output: (category, sub_category, color, pattern, material)
-3. **Canonical sentence generation** (template-based)
-4. **Embedding branch** (one of 11 experiments)
-5. **Dimension alignment** (for fusion projection to `R^1024` + L2 normalize)
-6. **Retrieval** using cosine similarity
-7. **Evaluation** (Relaxed Match, AMR, WAM, Attribute-specific Recall@K, MAP)
-8. **Logging + Save outputs** under `output/`
-
+## 2. Notebook-by-Notebook Explanation
 
 ---
 
-# 3. Embeddings & Dimension Alignment (Critical)
+# 01_FACTOR.ipynb
 
-## 3.1 Shared embedding dimension
+## Purpose
 
-* **Fusion / retrieval dimension: `D_fuse = 1024`**
-* All text embeddings and image embeddings must be projected into `R^1024`
-* Always apply **L2-normalization** after projection
+This notebook develops the **FACTOR module**, which is the first stage of the proposed framework. Its main purpose is to learn fine-grained fashion attributes from garment images and compare several adaptation strategies on CLIP-based models.
 
-## 3.2 Projection rule (query and database must share the same projector)
+The notebook is not just one model run. It is an experimental notebook that compares multiple approaches, including:
 
-For any embedding `e ∈ R^d`:
+* CLIP zero-shot baseline
+* FashionCLIP baseline
+* Linear Probe
+* Prompt Tuning
+* Hybrid Tuning
+* Full Fine-Tuning
+* Two-stage / color-enhanced refinement
 
-* `e_proj = normalize( W · e )`, where `W ∈ R^(1024×d)`
+This notebook is therefore the **core model development notebook** for attribute prediction.
 
-> This ensures **query fusion embedding** and **database fusion embedding** have identical dimensions and are comparable.
+## Dataset Used
 
----
+This notebook mainly uses the **Polyvore-based attribute dataset** across multiple random splits.
+From your slide and notebook structure, the attributes include:
 
-# 4. Experiment Definitions (11 Groups)
+* category
+* sub_category
+* color
+* material
+* pattern
 
-## 4.1 Baseline: Text-only (2)
+The notebook also uses **5 seeds / 5 splits** for robustness and fair comparison.
 
-### (T1) Text-only: BGE
+## Input
 
-* Input: canonical sentence
-* `t = normalize( Proj_BGE( BGE(sentence) ) )` (BGE 768 → project → 1024)
+* Single garment image
+* Corresponding training labels for the five attributes
+* Label library for all valid attribute classes
 
-### (T2) Text-only: Voyage
+## Output
 
-* Input: canonical sentence
-* `t = normalize( Voyage(sentence, output_dimension=1024) )`
+* Predicted attribute labels for each image
+* Evaluation reports for each seed
+* Aggregated mean ± std tables across seeds
+* Saved prediction CSV / JSON files
+* Performance comparison across different tuning strategies
 
----
+## What the code is doing
 
-## 4.2 Baseline: Image-only (3)
+### Part A. Environment and data loading
 
-### (I1) Image-only: GCL
+The notebook first mounts Google Drive, copies image folders locally, and loads the label library. This part prepares the experiment environment and keeps training I/O efficient.
 
-* Input: image
-* `v = normalize( Proj_GCL( GCL(image) ) )`
+### Part B. CLIP and FashionCLIP baselines
 
-### (I2) Image-only: SigLIP
+The notebook tests pretrained vision-language models as initial baselines. These sections show how well pretrained models can perform before task-specific adaptation.
 
-* Input: image
-* `v = normalize( Proj_SigLIP( SigLIP(image) ) )`
+### Part C. Linear Probe
 
-### (I3) Image-only: FashionCLIP
+A lightweight classifier head is trained on top of frozen image embeddings.
+This section is important because it provides a strong and stable adaptation baseline.
 
-* Input: image
-* `v = normalize( Proj_FashionCLIP( FashionCLIP(image) ) )`
+### Part D. Prompt Tuning / Hybrid Tuning / Full Fine-Tuning
 
----
+These sections compare different transfer learning strategies:
 
-## 4.3 Proposed: Fusion (6)
+* Prompt tuning adapts the text side
+* Hybrid tuning combines prompt-related adjustments with classification learning
+* Full fine-tuning updates more of the model parameters
 
-### Fusion rule (Late Fusion)
+This allows you to study the trade-off between efficiency, stability, and final accuracy.
 
-Given:
+### Part E. Two-stage design and color refinement
 
-* `t ∈ R^1024` from text encoder
-* `v ∈ R^1024` from image encoder
+This part addresses the observation that **color is the most error-prone attribute**.
+The code adds an additional refinement stage to improve difficult color-related prediction performance.
 
-Define fusion embedding:
+### Part F. Inference and evaluation
 
-* `f = normalize( λ·t + (1-λ)·v )`
-* Default: `λ = 0.5`
+The final section runs prediction on the test split and computes:
 
-### Fusion combinations (6)
+* accuracy
+* precision
+* recall
+* F1
+* relaxed matching for multi-label attributes
+* semantic similarity
 
-* **F1**: BGE + GCL
-* **F2**: BGE + SigLIP
-* **F3**: BGE + FashionCLIP
-* **F4**: Voyage + GCL
-* **F5**: Voyage + SigLIP
-* **F6**: Voyage + FashionCLIP
+This is especially important because your thesis does not rely only on exact lexical match, but also evaluates whether predicted labels are **semantically close** to the ground truth.
 
----
+## Small Summary from the Results
 
-# 5. Retrieval Scoring
+This notebook supports the main conclusion that:
 
-Compute scores between query embedding and each db embedding:
+* **Linear probe is the strongest and most stable single-stage method**
+* Prompt tuning and hybrid tuning do not consistently outperform linear probing
+* Full fine-tuning can become unstable
+* Additional targeted refinement is particularly useful for **color**
 
-* Cosine similarity
-
----
-
-# 6. Evaluation Metrics
-
-## 6.1 Relaxed Match (binary relevance)
-Rule :
-* A retrieved item is relevant if it matches (category AND sub_category AND color) with the query predictions.
-* Report relaxed match at Top3 
-* Save relaxed match Top10 to support “failure cases = Recall@10 = 0”.
-
-## 6.2 AMR - Attribute Match Rate 
-AMR measures how many attributes match between a query and a candidate, allowing partial credit.
-### Per-attribute score: 
-Let `s_a ∈ [0,1]` for each attribute:
-* category, sub_category, color, pattern: exact match → {0,1}
-* material: partial match allowed (e.g., Jaccard over material tokens)
-### Definition: `AMR = (s_cat + s_subcat + s_color + s_pattern + s_material) / 5`
-### Example:
-Query canonical attributes:
-
-* color = white, pattern = striped, sub_category = blouse, category = tops, material = {cotton, polyester}
-
-Candidate 1:
-
-* color = white (1)
-* pattern = striped (1)
-* sub_category = blouse (1)
-* category = tops (1)
-* material = {cotton} → partial (1/2 = 0.5)
-
-AMR = (1 + 1 + 1 + 1 + 0.5) / 5 = **0.90**
-
-Candidate 2:
-
-* color = blue (0)
-* pattern = striped (1)
-* sub_category = blouse (1)
-* category = tops (1)
-* material = {cotton, polyester} (1)
-
-AMR = (0 + 1 + 1 + 1 + 1) / 5 = **0.80**
-
-## 6.3 WAM - Weighted Attribute Matching
-
-Weights:
-
-* category 30%
-* sub_category 20%
-* color 25%
-* material 15%
-* pattern 10%
-
-WAM:
-* `WAM = 0.30*s_cat + 0.20*s_subcat + 0.25*s_color + 0.15*s_mat + 0.10*s_pattern`
-
-## 6.4 Attribute-Specific Recall@K (K ∈ {1,3,5,10})
-
-For each attribute `a` ∈ {category, sub_category, color, material, pattern}:
-
-* Define relevance set:
-  * `GT_a = { db_item | db_item[a] == query_pred[a] }`
-* Compute Recall@K independently for each attribute:
-  * `Recall@K(a) = |TopK ∩ GT_a| / |GT_a|`
-
-## 6.5 MAP - Mean Average Precision
-
-MAP requires a **binary relevance** definition per query.
-
-### Relevance used for MAP (recommended and consistent)
-
-Use the same Relaxed Match relevance:
-
-* relevant if **(category AND sub_category AND color)** matches.
-
-### Computation
-
-* For each query: compute **AP** based on ranked list and relevant set.
-* For each seed: compute **MAP = mean(AP over 50 queries)**.
-* Final reporting: **mean ± std across 5 seeds**.
+So for the thesis narrative, this notebook shows that **high-quality attribute prediction is the foundation of the whole recommendation system**.
 
 ---
 
-# 7. Required Saved Outputs (All under `output/`)
+# 02_attributes_classifiactions.ipynb
 
-```
-output/
-├── text-only/
-│   ├── BGE/
-│   │   ├── retrieval_results.csv
-│   │   ├── model_performance_summary.csv
-│   │   └── attribute_recall_breakdown.csv
-│   └── Voyage/
-├── image-only/
-│   ├── GCL /
-│   │   ├── retrieval_results.csv
-│   │   ├── model_performance_summary.csv
-│   │   └── attribute_recall_breakdown.csv
-│   ├── SigLIP /
-│   └── FashionCLIP /
-├── fusion/
-│   ├── BGE + GCL /
-│   │   ├── retrieval_results.csv
-│   │   ├── model_performance_summary.csv
-│   │   └── attribute_recall_breakdown.csv
-│   ├── BGE + SigLIP /
-│   ├── BGE + FashionCLIP /
-│   ├── Voyage + GCL /
-│   ├── Voyage + SigLIP /
-│   └── Voyage + FashionCLIP /
-├── image_predictions.csv
-└── mean_std_report.csv
-```
+## Purpose
+
+This notebook is the **inference bridge notebook** between model training and recommendation.
+Its purpose is to run the trained FACTOR model and the trained style classifier on the datasets used later in recommendation and retrieval.
+
+In other words, this notebook converts raw images into the **final six-attribute structured representation** used by the retrieval stage.
+
+## Dataset Used
+
+This notebook uses the datasets needed for downstream retrieval and recommendation, including:
+
+* recommendation query images
+* retrieval gallery images
+* outputs from multiple seed folders
+
+It also loads:
+
+* the trained FACTOR checkpoints
+* the trained style classification model
+* the factor label library
+
+## Input
+
+* Image folders for query/retrieval datasets
+* Trained FACTOR checkpoints
+* Trained style classification checkpoint
+* Label mapping files
+
+## Output
+
+* FACTOR predictions for each image
+* Style predictions for each image
+* Merged six-attribute CSV files
+* Description text fields such as structured text or sentence-form text for retrieval use
+
+## What the code is doing
+
+### Part A. Load trained FACTOR model
+
+This part restores the best attribute prediction model and prepares it for inference.
+
+### Part B. Load trained style model
+
+This section loads the trained style classifier used to predict the sixth attribute.
+
+### Part C. Collect dataset images
+
+The notebook gathers images from the recommendation and retrieval datasets and standardizes them into a unified inference format.
+
+### Part D. Run FACTOR inference
+
+The code predicts:
+
+* category
+* sub_category
+* color
+* material
+* pattern
+
+### Part E. Run style inference
+
+The code predicts the final style class for each image.
+
+### Part F. Merge predictions
+
+The predicted five FACTOR attributes and the style label are merged into one row per image.
+
+### Part G. Generate text representation
+
+The notebook also adds a description column, such as:
+
+* structured form:
+  `category, subcategory, color, material, pattern, style`
+* sentence form:
+  `A {color} {material} {pattern} {subcategory} {category} in a {style} style.`
+
+This is critical for your retrieval experiments because the text-only and multimodal models need standardized textual input.
+
+## Small Summary from the Results
+
+This notebook does not mainly introduce a new model; instead, it prepares the **semantic representation layer** for recommendation.
+Its main contribution is that it transforms raw images into a consistent six-attribute representation that can be reused across:
+
+* text-only retrieval
+* fusion retrieval
+* native multimodal retrieval
+
+So in your thesis, this notebook can be described as the **semantic annotation generation stage for downstream recommendation**.
 
 ---
 
-# 8. CSV Schemas (Tables)
+# 03_style_classify.ipynb
 
-## 8.1 image_predictions.csv
+## Purpose
 
-**Per query image Factor model outputs**
+This notebook develops the **style classification stage**, which is the second main component of the framework.
+Its goal is to classify each garment image into one of the defined style categories and compare different model families and adaptation strategies.
 
-* `image`
-* `category`
-* `sub_category`
-* `color`
-* `pattern`
-* `material`
+This notebook contains both:
 
-## 8.2 retrieval_results.csv
+* baseline experiments
+* fine-tuning experiments
 
-**Top-3 retrieval per (image, model, seed)**
+## Dataset Used
 
-* `image`
-* `model`
-* `seed`
-* `top1_image_id`, `top1_score`, `top1_description`
-* `top2_image_id`, `top2_score`, `top2_description`
-* `top3_image_id`, `top3_score`, `top3_description`
+This notebook uses the **style classification dataset**, mainly built from:
 
-## 8.3 model_performance_summary.csv
+* FashionStyle14K
+* Fashion Product Images
+* additional online images
 
-**Overall performance per (model, seed)**
+The final task is a **17-class style classification problem**, based on your slide description. 
 
-* `model`
-* `seed`
-* `Recall@1`, `Recall@3`, `Recall@5`, `Recall@10`
-* `MAP`
-* `AMR`
-* `WAM`
+## Input
 
-## 8.4 attribute_recall_breakdown.csv
+* Single garment image
+* Style label
+* Train / validation / test CSV files
+* Image directories
 
-**Five attributes × Recall@{1,3,5,10}**
-Per model, per seed, per attribute
+## Output
 
-* `model`
-* `seed`
-* `attribute` ∈ {category, sub_category, color, material, pattern}
-* `Recall@1`, `Recall@3`, `Recall@5`, `Recall@10`
+* Trained style classification models
+* Validation and test predictions
+* Evaluation tables
+* Comparison figures
+* Confusion analysis outputs
 
-## 8.5 mean_std_report.csv 
+## What the code is doing
 
-* `model` ∈ {BGE,Voyage,GCL,SigLIP,FashionCLIP,BGE+GCL,BGE+SigLIP,BGE+FashionCLIP,Voyage+GCL,Voyage+SigLIP,Voyage+FashionCLIP}
-* `Recall@1 (mean±std)`
-* `Recall@3 (mean±std)`
-* `Recall@5 (mean±std)`
-* `Recall@10 (mean±std)`
-* `MAP (mean±std)`
-* `AMR (mean±std)`
-* `WAM (mean±std)`
+### Part A. Baseline experiments
+
+The notebook first builds baseline models using:
+
+* ResNet50
+* OpenFashionCLIP
+* FashionCLIP
+
+This gives a direct comparison between a CNN backbone and CLIP-style vision-language backbones.
+
+### Part B. Dataset class and dataloaders
+
+This section standardizes image reading, label mapping, and preprocessing for different backbones.
+
+### Part C. Model definitions
+
+The notebook defines:
+
+* ResNet classifier
+* OpenFashionCLIP classifier
+* FashionCLIP classifier
+
+### Part D. Training and inference
+
+The code trains each model, saves the best checkpoints, and then performs inference on validation and test data.
+
+### Part E. Fine-tuning experiments
+
+This section expands the comparison to multiple adaptation methods such as:
+
+* partial fine-tuning
+* prompt-based classification
+* LoRA
+* full fine-tuning
+
+This is important because style is more abstract than low-level attributes, so the notebook tests which transfer strategy best captures these high-level semantics.
+
+### Part F. Evaluation and visualization
+
+The notebook calculates:
+
+* accuracy
+* macro precision
+* macro recall
+* macro F1
+* confusion-related summaries
+
+## Small Summary from the Results
+
+The overall finding is consistent with your slide:
+
+* **Frozen baselines are not enough for fine-grained style recognition**
+* **Controlled adaptation works better than full updating**
+* **Partial fine-tuning gives the strongest and cleanest performance**
+
+So for your thesis writing, the key message is:
+
+> Style requires higher-level semantic adaptation, and partial fine-tuning gives the best trade-off between performance and stability.
 
 ---
 
-# 9. Printed Outputs 
+# 03_robustness_style_classify.ipynb
 
-For each query image:
+## Purpose
 
-1. **Image name**
-2. **Prediction row**
-   `image,category,sub_category,color,pattern,material`
-3. **Retrieval Top-3 for each seed** (same fields as `retrieval_results.csv`)
-4. **Attribute recall breakdown** (table)
-5. **Mean±Std report** (final paper table)
+This notebook extends the previous style classification notebook by testing whether the results remain stable across **five different data splits**.
 
-At last print:
-1. mean_std_report
-2. Text vs Image vs Fusion
-3. Top-K Failure Cases
-4. Embedding Time Cost
+Its role is to provide a **robustness study**, not just a single-split performance report.
+
+## Dataset Used
+
+* The same style classification data as the previous notebook
+* Five train/validation/test split configurations
+
+## Input
+
+* Multi-split dataset CSV files
+* Image directories
+* Same model families and fine-tuning settings as the style classification notebook
+
+## Output
+
+* Per-split training and evaluation results
+* Mean ± std summary tables across splits
+* More reliable model comparison
+
+## What the code is doing
+
+### Part A. Baseline robustness
+
+The notebook first repeats baseline models across five splits and aggregates the results.
+
+### Part B. Fine-tuning robustness
+
+It then repeats the fine-tuning experiments across all splits.
+
+### Part C. Mean ± std reporting
+
+The code summarizes each experiment with mean ± std, which is very useful for thesis tables.
+
+## Small Summary from the Results
+
+This notebook strengthens the validity of your style classification conclusions.
+The most important takeaway is that the selected best method remains competitive across multiple splits, which means the chosen style model is not just a lucky result from a single partition.
+
+In the thesis, this notebook can be presented as evidence that your style classification design is **robust and reproducible**.
+
 ---
 
-# 10. Additional Analyses 
+# 04_recommendation.ipynb
 
-## 10.1 [Ablation] Text vs Image vs Fusion
+## Purpose
 
-Store Recall@1, @5, @10 for:
+This notebook implements the final **attribute-aware recommendation and retrieval stage**.
+It is the notebook that actually turns predicted semantics into retrieval results.
 
-* Text-only: {BGE, Voyage}
-* Image-only: {GCL, SigLIP, FashionCLIP}
-* Fusion: {6 combinations}
+This notebook compares four retrieval settings:
 
-## 10.2 [Error Analysis] Top-K Failure Cases
+1. image-only retrieval
+2. text-only retrieval
+3. fusion retrieval
+4. native multimodal retrieval
 
-* Automatically list query images with **Recall@10 = 0**
-* Save their image paths for qualitative inspection
+So this is the notebook that demonstrates the final value of the full framework.
 
-## 10.3 [Efficiency] Embedding Time Cost
+## Dataset Used
 
-Measure time cost per model/branch:
+According to your slide and notebook structure, the retrieval setup uses:
 
-* factor model time
-* text embedding time (BGE, Voyage)
-* image embedding time (GCL, SigLIP, FashionCLIP)
-* projection + fusion time
-* retrieval time
+* **Query set**: Pinterest + Fashion Product Images
+* **Gallery set**: Polyvore train split
+* **Five seed-based galleries** for robustness evaluation
+
+The final semantic fields used are:
+
+* category
+* sub_category
+* color
+* material
+* pattern
+* style 
+
+## Input
+
+Depending on retrieval setting, the input can be:
+
+* query image only
+* structured attribute text only
+* image + text together
+* fused image and text similarity scores
+
+## Output
+
+* Top-K retrieved items
+* Retrieval CSV files
+* Global ranking tables
+* Attribute matching tables
+* Semantic similarity tables
+* Thesis-format summary tables
+
+## What the code is doing
+
+### Part A. Image-only retrieval
+
+This part compares image encoders such as:
+
+* SigLIP2
+* FashionCLIP
+* OpenFashionCLIP
+
+The code encodes query and gallery images, computes cosine similarity, and retrieves the top-K nearest items.
+
+### Part B. Text-only retrieval
+
+This part uses the six predicted attributes as text and compares:
+
+* BGE-M3
+* Voyage
+
+It tests both:
+
+* structured text format
+* full sentence template format
+
+This is a very important design choice in your thesis because it directly examines whether **compact structured semantics** are already enough for high-quality retrieval.
+
+### Part C. Fusion retrieval
+
+This section combines:
+
+* FashionCLIP image similarity
+* Voyage text similarity
+
+Two fusion methods are tested:
+
+* score fusion
+* rank fusion
+
+This helps study whether late fusion gives better balanced retrieval quality.
+
+### Part D. Native multimodal retrieval
+
+This section evaluates models that natively encode image-text information together, such as:
+
+* Voyage Multimodal
+* SigLIP
+
+### Part E. Global evaluation
+
+The notebook computes multiple retrieval metrics, including:
+
+* precision@k
+* recall@k
+* MRR@k
+* MAP@k
+* semantic similarity
+* AMR@k
+* EAM@k
+* weighted attribute matching
+* nDCG@k
+
+These metrics are aligned with your thesis goal of evaluating not only visual similarity, but also **semantic faithfulness and attribute consistency**.
+
+---
+
+## Author & Copyright
+
+© 2026 Shao-Yu Huang. All rights reserved.
+
+**Author:** Shao-Yu Huang
+**University:** San José State University  
+**Department:** Applied Data Science  
+
+**Committee:**  
+- Dr. Mohammad Masum (Chair)  
+- Dr. Guannan Liu (Committee Member)  
+- Dr. Saptarshi Sengupta (Committee Member)  
